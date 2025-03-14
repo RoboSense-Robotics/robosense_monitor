@@ -1,0 +1,8 @@
+<launch>
+  <arg name="node_name" default="rs_monitor"/>
+
+  <node pkg="rs_monitor" type="rs_monitor" name="$(arg node_name)" output="screen">
+    <param name="node_name" value="$(arg node_name)"/>
+    <param name="package_name" value="rs_monitor"/>
+  </node>
+</launch>

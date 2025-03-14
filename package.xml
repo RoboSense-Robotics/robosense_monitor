@@ -1,0 +1,45 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>rs_monitor</name>
+  <version>0.1.0</version>
+  <description>System monitor for various metrics</description>
+  <maintainer email="william.ren@robosense.cn">william.ren</maintainer>
+  <license>Apache-2.0</license>
+
+  <!-- both runtime and build -->
+  <!-- ROS2 -->
+  <depend condition="$ROS_VERSION == 2">rclpy</depend>
+  <depend condition="$ROS_VERSION == 2">rclcpp</depend>
+  <depend condition="$ROS_VERSION == 2">rclcpp_components</depend>
+  <depend condition="$ROS_VERSION == 2">ament_index_cpp</depend>
+  <!-- ROS1 -->
+  <depend condition="$ROS_VERSION == 1">rospy</depend>
+  <depend condition="$ROS_VERSION == 1">roscpp</depend>
+  <depend condition="$ROS_VERSION == 1">topic_tools</depend>
+  <depend condition="$ROS_VERSION == 1">roslib</depend>
+  <depend condition="$ROS_VERSION == 1">rosbag</depend>
+  <!-- common -->
+  <depend>yaml-cpp</depend>
+  <depend>diagnostic_msgs</depend>
+
+  <!-- runtime -->
+  <exec_depend>python3-pip</exec_depend>
+  <exec_depend>python3-venv</exec_depend>
+
+  <!-- build -->
+  <!-- ROS2 -->
+  <buildtool_depend condition="$ROS_VERSION == 2">ament_cmake</buildtool_depend>
+  <buildtool_depend condition="$ROS_VERSION == 2">ament_cmake_python</buildtool_depend>
+  <!-- ROS1 -->
+  <buildtool_depend condition="$ROS_VERSION == 1">catkin</buildtool_depend>
+
+  <!-- test -->
+  <test_depend condition="$ROS_VERSION == 2">ament_lint_auto</test_depend>
+  <test_depend condition="$ROS_VERSION == 2">ament_lint_common</test_depend>
+
+  <export>
+    <build_type condition="$ROS_VERSION == 2">ament_cmake</build_type>
+    <build_type condition="$ROS_VERSION == 1">catkin</build_type>
+  </export>
+</package>

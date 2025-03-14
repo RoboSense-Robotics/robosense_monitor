@@ -1,0 +1,100 @@
+ros2_process_manager:
+  refresh_interval_ms: 6000
+  ros2_process_identifiers:
+    - "--ros-args"
+    - "__node:="
+  ros2_process_comm:
+    - "ros2"
+    - "python3"
+  max_process_name_length: 72
+
+  monitored_processes:
+    - "keyword": "metas_ros/lib/metas_ros/ms_node"
+      "name": "ms_node"
+    - "keyword": "postprocess/lib/postprocess/postprocess_node"
+      "name": "postprocess_node"
+    - "keyword": "perception/lib/perception/yolov8_node"
+      "name": "yolov8_node"
+
+resource_monitor:
+  enable: true
+  exec_interval_ms: 1000
+  publish_topic_name: "/diagnostics"
+
+frequency_monitor:
+  enable: true
+  exec_interval_ms: 1000
+  publish_topic_name: "/diagnostics"
+
+  topics:
+  - name: "/diagnostics"
+    min_freq: 1.0
+  # - name: "/rslidar_points_e1"
+  #   min_freq: 0.0
+  # - name: "/rslidar_imuData_e1"
+  #   min_freq: 0.0
+  # - name: "/pnc/abs/odom"
+  #   min_freq: 0.0
+  # - name: "/lidar_pose_lla"
+  #   min_freq: 0.0
+  # - name: "/lidar_vehicle_points"
+  #   min_freq: 0.0
+  # - name: "/local_costmap/costmap"
+  #   min_freq: 0.0
+  # - name: "/global_plan"
+  #   min_freq: 0.0
+  # - name: "/local_plan"
+  #   min_freq: 0.0
+  # - name: "/plan_smoothed"
+  #   min_freq: 0.0
+  # - name: "/teb_poses"
+  #   min_freq: 0.0
+  # - name: "/teb_markers"
+  #   min_freq: 0.0
+  # - name: "/CameraFrame"
+  #   min_freq: 0.0
+  # - name: "/Imu"
+  #   min_freq: 0.0
+  # - name: "/camera/image_color/compressed"
+  #   min_freq: 0.0
+  # - name: "/camera/image_raw/cam_range_motion"
+  #   min_freq: 0.0
+  # - name: "/camera/image_raw/proj_motion"
+  #   min_freq: 0.0
+  # - name: "/camera/image_raw/proj_motion_deocc"
+  #   min_freq: 0.0
+  # - name: "/camera/image_raw/proj_ori"
+  #   min_freq: 0.0
+  # - name: "/camera/image_raw/range_motion"
+  #   min_freq: 0.0
+  # - name: "/image_rgb"
+  #   min_freq: 0.0
+  - name: "/parameter_events"
+    min_freq: 0.0
+  - name: "/rosout"
+    min_freq: 0.0
+  # - name: "/rslidar_imuData_meta"
+  #   min_freq: 0.0
+  # - name: "/rslidar_points_meta"
+  #   min_freq: 0.0
+  # - name: "/rslidar_points_motion"
+  #   min_freq: 0.0
+  # - name: "/rslidar_points_motion_rgb"
+  #   min_freq: 0.0
+  # - name: "/rslidar_points_origin"
+  #   min_freq: 0.0
+  # - name: "/rslidar_points_origin_deocc_rgb"
+  #   min_freq: 0.0
+  # - name: "/rslidar_points_origin_rgb"
+  #   min_freq: 0.0
+  # - name: "/yolov8"
+  #   min_freq: 0.0
+
+timestamp_monitor:
+  enable: false
+  exec_interval_ms: 2000
+  publish_topic_name: "/diagnostics"
+
+  topics:
+    - name: "/diagnostics"
+      max_difference_ms: 1000
