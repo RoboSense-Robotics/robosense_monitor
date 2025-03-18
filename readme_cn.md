@@ -33,9 +33,9 @@
 
 ```bash
 # ssh
-git clone git@gitlab.robosense.cn:super_sensor_sdk/ros2_sdk/rs_monitor.git -b main
+git clone git@github.com:RoboSense-Robotics/robosense_monitor.git -b main rs_monitor
 # http
-git clone git@gitlab.robosense.cn:super_sensor_sdk/ros2_sdk/rs_monitor.git -b main
+git clone https://github.com/RoboSense-Robotics/robosense_monitor.git -b main rs_monitor
 ```
 
 ### 3.2 通过 rosdep 安装依赖
@@ -245,4 +245,4 @@ The difference between system timestamp and message timestamp exceeds the thresh
 
 ## 6. FAQ
 
-[Create New Issue](http://gitlab.robosense.cn/super_sensor_sdk/ros2_sdk/rs_monitor/-/issues/new)
+[联系开发者](mailto:william.ren@robosense.cn)
