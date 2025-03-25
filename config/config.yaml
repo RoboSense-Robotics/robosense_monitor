@@ -9,7 +9,7 @@ ros2_process_manager:
   max_process_name_length: 72
 
   monitored_processes:
-    - "keyword": "metas_ros/lib/metas_ros/ms_node"
+    - "keyword": "ac_driver/ms_node"
       "name": "ms_node"
     - "keyword": "postprocess/lib/postprocess/postprocess_node"
       "name": "postprocess_node"
