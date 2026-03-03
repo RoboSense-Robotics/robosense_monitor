@@ -63,26 +63,20 @@ bool FrequencyMonitor::init(YAML::Node const & config)
     return false;
   }
 
-  prepare_generic_subscribers<FrequencyMonitor, FirstArgType::TopicName>(
-    topics_, subscribers_, &FrequencyMonitor::message_callback);
+  prepare_generic_subscribers<FrequencyMonitor>(topics_, &FrequencyMonitor::message_callback);
 
   return true;
 }
 
 void FrequencyMonitor::message_callback(
-  CALLBACK_PARAM_TYPE(SerializedMessage), std::string const & topic_name)
+  CALLBACK_PARAM_TYPE(SerializedMessage), TopicConfig & config)
 {
-  auto it = topics_.find(topic_name);
-  if (it != topics_.end()) {
-    it->second.message_count.fetch_add(1, std::memory_order_relaxed);
-  }
+  config.message_count.fetch_add(1, std::memory_order_relaxed);
 }
-
-uint64_t FrequencyMonitor::now_ms() { return SystemTime() / 1e6; }
 
 void FrequencyMonitor::calculate_frequencies()
 {
-  auto current_timestamp_ms = now_ms();
+  auto current_timestamp_ms = SteadyTime() / 1e6;
 
   for (auto & [topic, config] : topics_) {
     if (config.is_enabled) {
@@ -142,8 +136,7 @@ void FrequencyMonitor::run_once(uint64_t)
 void FrequencyMonitor::update_frequency_status(diagnostic_updater::DiagnosticStatusWrapper & stat)
 {
   calculate_frequencies();
-  prepare_generic_subscribers<FrequencyMonitor, FirstArgType::TopicName>(
-    topics_, subscribers_, &FrequencyMonitor::message_callback);
+  prepare_generic_subscribers<FrequencyMonitor>(topics_, &FrequencyMonitor::message_callback);
 
   bool all_ok = true;
   std::string message = "Topic frequencies OK";

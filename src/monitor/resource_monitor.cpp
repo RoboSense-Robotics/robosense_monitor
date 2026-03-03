@@ -85,7 +85,7 @@ void ResourceMonitor::update_process_stats(ProcessUsageInfo & info)
     return;
   }
 
-  auto current_time = SystemTime();
+  auto current_time = SteadyTime();
   auto time_diff = (current_time - info.prev_time) / 1e9;
 
   FILETIME createTime, exitTime, kernelTime, userTime;
@@ -161,10 +161,13 @@ void ResourceMonitor::update_process_stats(ProcessUsageInfo & info)
   iss >> utime >> stime >> cutime >> cstime;
 
   uint64_t jiffies = utime + stime + cutime + cstime;
-  auto current_time = SystemTime();
-  auto time_diff = (current_time - info.prev_time) / 1e9;
+  auto current_time = SteadyTime();
+  auto prev_time = info.prev_time;
+  info.prev_time = current_time;
 
-  if (info.prev_time > 0 && time_diff > 0) {
+  auto time_diff = (current_time - prev_time) / 1e9;
+
+  if (prev_time > 0 && time_diff > 0) {
     info.cpu_usage =
       ((jiffies - info.prev_cpu_jiffies) / (time_diff * sysconf(_SC_CLK_TCK))) * 100.0;
     if (info.cpu_usage > 10000.0 || info.cpu_usage < 0.0) {
@@ -210,7 +213,7 @@ void ResourceMonitor::update_process_stats(ProcessUsageInfo & info)
     }
   }
 
-  if (info.prev_time > 0 && time_diff > 0) {
+  if (prev_time > 0 && time_diff > 0) {
     info.io_read_mb_sec = ((read_bytes - info.prev_io_read_bytes) / 1048576.f) / time_diff;
     info.io_write_mb_sec = ((write_bytes - info.prev_io_write_bytes) / 1048576.f) / time_diff;
   } else {
@@ -220,8 +223,6 @@ void ResourceMonitor::update_process_stats(ProcessUsageInfo & info)
 
   info.prev_io_read_bytes = read_bytes;
   info.prev_io_write_bytes = write_bytes;
-
-  info.prev_time = current_time;
 }
 
 #endif

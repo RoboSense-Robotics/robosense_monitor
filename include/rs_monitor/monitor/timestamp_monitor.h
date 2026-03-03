@@ -16,12 +16,18 @@
 #define RS_MONITOR_TIMESTAMP_MONITOR_H
 
 #include <memory>
+#include <atomic>
+#include <new>
 #include <unordered_map>
 
 #include "rs_monitor/monitor/monitor_base.h"
 
+#include "diagnostic_updater/diagnostic_updater.hpp"
+
 namespace robosense::rs_monitor
 {
+
+constexpr size_t kHardwareDestructiveInterferenceSize = 64;  // bytes
 
 /**
  * @class TimestampMonitor
@@ -64,9 +70,15 @@ protected:
    */
   struct TopicConfig
   {
-    uint32_t max_difference_ms{0};
+    alignas(kHardwareDestructiveInterferenceSize) std::atomic<uint64_t> message_count{0};
+    alignas(kHardwareDestructiveInterferenceSize) std::atomic<uint64_t> abnormal_latency_count{0};
+
+    alignas(kHardwareDestructiveInterferenceSize)
+      // hardly never changed
+      uint32_t max_difference_ms{0};
     std::string name{};
     bool is_enabled{false};
+    bool is_deserializable{true};
   };
 
   /**
@@ -84,11 +96,13 @@ protected:
    * @param message Serialized message
    * @param config Topic configuration
    */
-  void callback(CALLBACK_PARAM_TYPE(SerializedMessage) const & message, TopicConfig const & config);
+  void callback(CALLBACK_PARAM_TYPE(SerializedMessage) const & message, TopicConfig & config);
+
+protected:
+  void update_timestamp_status(diagnostic_updater::DiagnosticStatusWrapper & stat);
 
 private:
   std::unordered_map<std::string, TopicConfig> topics_;
-  GenericSubscriberMap subscribers_;
 };
 
 }  // namespace robosense::rs_monitor

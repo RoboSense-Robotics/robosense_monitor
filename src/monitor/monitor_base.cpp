@@ -16,12 +16,21 @@
 
 #include "diagnostic_updater/diagnostic_updater.hpp"
 
+#include <sstream>
+
+#if __ROS2__
+#include <nlohmann/json.hpp>
+#endif
+
 namespace robosense::rs_monitor
 {
 
 MonitorBase::MonitorBase(std::string const & monitor_name, NodeHandle * nh)
 : node_handle_ptr_(nh), monitor_name_(monitor_name)
 {
+  std::ostringstream oss;
+  oss << monitor_name_ << "@0x" << std::hex << reinterpret_cast<uintptr_t>(this);
+  owner_id_ = oss.str();
 }
 
 void MonitorBase::update(uint64_t current_time_ms)
@@ -46,18 +55,18 @@ bool MonitorBase::init(YAML::Node const & config)
 
   // load config
   if (!config.IsMap()) {
-    RS_ERROR(node_handle_ptr_, "Root object in config file is not a map!");
+    RS_ERROR(get_node(), "Root object in config file is not a map!");
     return false;
   }
 
   auto monitor_config(config[monitor_name_]);
   if (!monitor_config.IsDefined()) {
-    RS_ERROR(node_handle_ptr_, "Missing key [%s] in config file!", monitor_name_.c_str());
+    RS_ERROR(get_node(), "Missing key [%s] in config file!", monitor_name_.c_str());
     return false;
   }
 
   if (!monitor_config.IsMap()) {
-    RS_ERROR(node_handle_ptr_, "Config of [%s] is not a map!", monitor_name_.c_str());
+    RS_ERROR(get_node(), "Config of [%s] is not a map!", monitor_name_.c_str());
     return false;
   }
 
@@ -65,12 +74,12 @@ bool MonitorBase::init(YAML::Node const & config)
     is_enabled_ = monitor_config["enable"].as<bool>();
     exec_interval_ms_ = monitor_config["exec_interval_ms"].as<uint64_t>();
   } catch (YAML::Exception const & e) {
-    RS_ERROR(node_handle_ptr_, "Failed to parse config fields: %s", e.what());
+    RS_ERROR(get_node(), "Failed to parse config fields: %s", e.what());
     return false;
   }
 
   if (!is_enabled_) {
-    RS_ERROR(node_handle_ptr_, "[%s] has been disabled", monitor_name_.c_str());
+    RS_ERROR(get_node(), "[%s] has been disabled", monitor_name_.c_str());
     return false;
   }
 
@@ -80,20 +89,28 @@ bool MonitorBase::init(YAML::Node const & config)
       // 只在 publish_topic_name 可转换为字符串时创建 diagnostic updater
       publish_topic_name_ = publish_topic_name.as<std::string>();
       if (publish_topic_name_.empty()) {
-        RS_ERROR(node_handle_ptr_, "Required field [publish_topic_name] can not be empty!");
+        RS_ERROR(get_node(), "Required field [publish_topic_name] can not be empty!");
         return false;
       }
 
       updater_ =
         std::make_shared<diagnostic_updater::Updater>(node_handle_ptr_, publish_topic_name_);
       if (!updater_) {
-        RS_ERROR(node_handle_ptr_, "Failed to create diagnostic updater!");
+        RS_ERROR(get_node(), "Failed to create diagnostic updater!");
         return false;
       }
-      updater_->setHardwareID("none");
+
+      // 获取 hostname
+      std::string hardware_id("none");
+      auto const * raw_hardware_id = std::getenv("RS_HARDWARE_ID");
+      if (raw_hardware_id) {
+        hardware_id = std::string(raw_hardware_id);
+      }
+      hardware_id_ = hardware_id;
+      updater_->setHardwareID(hardware_id);
     }
   } else {
-    RS_ERROR(node_handle_ptr_, "Missing required key [publish_topic_name]!");
+    RS_ERROR(get_node(), "Missing required key [publish_topic_name]!");
     return false;
   }
 

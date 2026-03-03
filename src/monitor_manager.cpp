@@ -61,10 +61,10 @@ MonitorManager::MonitorManager(NodeHandle & nh)
 
   std::string config_file_path{};
 #if __ROS2__
-  declare_parameter<std::string>("config_path", "");
-  config_file_path = get_parameter("config_path").as_string();
+  declare_parameter<std::string>("config_file", "");
+  config_file_path = get_parameter("config_file").as_string();
 #elif __ROS1__
-  nh.getParam("config_path", config_file_path);
+  nh.getParam("config_file", config_file_path);
 #endif
 
   YAML::Node config;

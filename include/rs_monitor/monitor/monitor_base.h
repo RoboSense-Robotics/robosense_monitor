@@ -16,10 +16,18 @@
 #ifndef RS_MONITOR_MONITOR_BASE_H
 #define RS_MONITOR_MONITOR_BASE_H
 
+#include <atomic>
 #include <memory>
+#include <string>
+#include <cstdint>
 #include <type_traits>
+#include <unordered_map>
+#include <vector>
 
 #include <yaml-cpp/yaml.h>
+
+#include <rclcpp/qos.hpp>
+#include <rclcpp/node_interfaces/node_graph.hpp>
 
 #include "rs_monitor/common/ros_adapter.h"
 #include "rs_monitor/common/common.h"
@@ -37,6 +45,28 @@ namespace diagnostic_updater
 class Updater;
 }  // namespace diagnostic_updater
 
+template <typename T, typename = void>
+struct HasMemberSubscriptionFailure : std::false_type
+{
+};
+
+template <typename T>
+struct HasMemberSubscriptionFailure<
+  T, std::void_t<decltype(std::declval<T>().has_subscription_failure)>> : std::true_type
+{
+};
+
+template <typename T, typename = void>
+struct HasMemberLastCalculateTime : std::false_type
+{
+};
+
+template <typename T>
+struct HasMemberLastCalculateTime<T, std::void_t<decltype(std::declval<T>().last_calculate_time)>>
+: std::true_type
+{
+};
+
 namespace robosense::rs_monitor
 {
 
@@ -49,6 +79,9 @@ namespace robosense::rs_monitor
  */
 class MonitorBase
 {
+public:
+  using CallbackType = std::function<void(CALLBACK_PARAM_TYPE(SerializedMessage) const &)>;
+
 public:
   /**
    * @brief Constructor for MonitorBase
@@ -89,8 +122,15 @@ protected:
 
   inline NodeHandle & get_node() const { return *node_handle_ptr_; }
   inline std::string const & get_name() const { return monitor_name_; }
+  inline std::string const & get_owner_id() const { return owner_id_; }
   inline uint64_t get_exec_interval_ms() const { return exec_interval_ms_; }
   inline diagnostic_updater::Updater & get_updater() const { return *updater_; }
+
+#if __ROS2__
+  // Publish a quickdata request (std_msgs/String JSON) with a global cooldown gate.
+  // Returns true if published; false if suppressed by cooldown or publisher unavailable.
+  bool publish_quickdata_request(std::string const & issue_type, std::string const & issue_text);
+#endif
 
   enum class FirstArgType : uint8_t {
     None,
@@ -103,23 +143,23 @@ protected:
    *
    * Sets up generic message subscribers for a set of topics with appropriate callbacks.
    *
-   * @tparam This Type of the derived class
-   * @tparam FAT First argument type for the callback
    * @param topics Map of topic configurations
-   * @param subscribers Map to store created subscribers
    * @param callback Member function to call when messages are received
    */
-  template <typename This, FirstArgType FAT, typename TopicMap, typename SubscriberMap, typename F>
-  void prepare_generic_subscribers(TopicMap & topics, SubscriberMap & subscribers, F && callback)
+  template <typename This, typename TopicMap, typename F>
+  void prepare_generic_subscribers(
+    TopicMap & topics, F && callback, std::string const & owner_id = {})
   {
-    if (subscribers.size() == topics.size()) {
-      return;
-    }
-
+    auto const owner_key = owner_id.empty() ? this->get_owner_id() : owner_id;
     for (auto & [topic, config] : topics) {
-      auto it = subscribers.find(topic);
-      if (it != subscribers.end() && it->second) {
+      if (config.is_enabled) {
         continue;
+      }
+
+      if constexpr (HasMemberSubscriptionFailure<decltype(config)>::value) {
+        if (config.has_subscription_failure) {
+          continue;
+        }
       }
 
       bool topic_has_publisher = false;
@@ -147,50 +187,136 @@ protected:
         continue;
       }
 
-      // 创建 subscriber
+      // 生成 bind 后的回调函数
+      auto bound_cb = [this, &config, cb = std::forward<F>(callback)](
+                        CALLBACK_PARAM_TYPE(SerializedMessage) const & msg) mutable {
+        using CB = std::decay_t<decltype(cb)>;
+        if constexpr (std::is_member_function_pointer_v<CB>) {
+          (reinterpret_cast<This *>(this)->*cb)(msg, config);
+        } else {
+          cb(msg, config);
+        }
+      };
+
+      std::lock_guard lock(subscriber_hub_mtx_);
+      auto it = subscriber_hub_.find(topic);
+      if (it != subscriber_hub_.end()) {
+        it->second.callbacks[owner_key] = bound_cb;
+        config.is_enabled = true;
+        // 添加 callback 后的 config 后处理
+        if constexpr (HasMemberLastCalculateTime<decltype(config)>::value) {
+          config.last_calculate_time = SteadyTime() / 1e6;  // unit: ms
+        }
+        continue;
+      }
+
 #if __ROS2__
-      auto qos = rclcpp::QoS(rclcpp::KeepLast(1)).best_effort().durability_volatile();
+      // 动态获取 QoS, 取兼容性最高的结果
+      auto qos = [&]() {
+        // 统一使用 KeepLast, depth 取发布端最大值和 depth 的较大者
+        size_t depth = 100;
+        auto reliability = rclcpp::ReliabilityPolicy::Reliable;  // 有 BE 则用 BE, 否则用 Reliable
+        auto durability = rclcpp::DurabilityPolicy::Volatile;  // 有 TransientLocal 则提升
+
+        auto graph = this->get_node().get_node_graph_interface();
+        auto infos = graph->get_publishers_info_by_topic(topic, /*no_demangle=*/false);
+
+        for (auto const & ep : infos) {
+          auto const & pq = ep.qos_profile();
+          depth = std::max(depth, static_cast<size_t>(pq.depth()));
+          if (pq.reliability() == rclcpp::ReliabilityPolicy::BestEffort) {
+            reliability = rclcpp::ReliabilityPolicy::BestEffort;
+          }
+        }
+
+        rclcpp::QoS q{rclcpp::KeepLast(depth)};
+        q.reliability(reliability).durability(durability);
+        return q;
+      }();
+
       GenericSubscriber subscriber;
-#define ___CREATE_CALLBACK(__callback__) \
-  subscriber = this->get_node().create_generic_subscription(topic, topic_type, qos, __callback__)
+
+#define ___CREATE_CALLBACK(__callback__)                                                        \
+  try {                                                                                         \
+    subscriber =                                                                                \
+      this->get_node().create_generic_subscription(topic, topic_type, qos, __callback__);       \
+  } catch (const std::exception & e) {                                                          \
+    RS_ERROR(                                                                                   \
+      get_node(), "Failed to create subscription for topic [%s]: %s", topic.c_str(), e.what()); \
+    if constexpr (HasMemberSubscriptionFailure<decltype(config)>::value) {                      \
+      config.has_subscription_failure = true;                                                   \
+    }                                                                                           \
+  }
 
 #elif __ROS1__
 #define ___CREATE_CALLBACK(__callback__) \
   *subscriber = this->get_node().subscribe<topic_tools::ShapeShifter>(topic, 1, __callback__)
       GenericSubscriber subscriber(new ros::Subscriber());
-
 #endif
 
-      // 根据回调类型和 FirstArgType 创建适当的回调
       bool success = false;
 
-      if constexpr (std::is_member_function_pointer<F>::value) {
-        if constexpr (std::is_base_of_v<MonitorBase, This>) {
-          if constexpr (FAT == FirstArgType::TopicName) {
-            auto cb = [callback, topic, this](CALLBACK_PARAM_TYPE(SerializedMessage) const & msg) {
-              (reinterpret_cast<This *>(this)->*callback)(msg, topic);
-            };
-            ___CREATE_CALLBACK(cb);
-            success = subscriber != nullptr;
-          } else if constexpr (FAT == FirstArgType::TopicConfig) {
-            auto cb = [callback, config, this](CALLBACK_PARAM_TYPE(SerializedMessage) const & msg) {
-              (reinterpret_cast<This *>(this)->*callback)(msg, config);
-            };
-            ___CREATE_CALLBACK(cb);
-            success = subscriber != nullptr;
+      subscriber_hub_[topic] = SubscriberEntry{};
+      auto & callbacks = subscriber_hub_[topic].callbacks;
+      callbacks.emplace(owner_key, std::move(bound_cb));
+
+      // 生成 dispatcher, 批量调用已注册的回调函数
+      auto dispatch = [this, topic](CALLBACK_PARAM_TYPE(SerializedMessage) const & msg) -> void {
+        std::vector<CallbackType> snapshot;
+        {
+          std::lock_guard lock(subscriber_hub_mtx_);
+          auto it = subscriber_hub_.find(topic);
+          if (it == subscriber_hub_.end()) {
+            return;
+          }
+          snapshot.reserve(it->second.callbacks.size());
+          for (auto & [_, fn] : it->second.callbacks) {
+            snapshot.push_back(fn);
           }
         }
-      }
+        for (auto & fn : snapshot) {
+          fn(msg);
+        }
+      };
+
+      ___CREATE_CALLBACK(dispatch);
+      success = subscriber != nullptr;
 #undef ___CREATE_CALLBACK
+
       if (!success) {
-        RS_ERROR(this->get_node(), "Failed to create subscription for topic [%s]", topic.c_str());
         continue;
       }
 
+      // 添加 callback 后的 config 后处理 [同上]
       config.is_enabled = true;
-      subscribers[topic] = std::move(subscriber);
+      if constexpr (HasMemberLastCalculateTime<decltype(config)>::value) {
+        config.last_calculate_time = SteadyTime() / 1e6;  // unit: ms
+      }
+      subscriber_hub_[topic].subscriber = std::move(subscriber);
     }
   }
+
+  bool remove_subscriber_callback(std::string const & topic, std::string const & owner_id)
+  {
+    if (owner_id.empty()) {
+      return false;
+    }
+    std::lock_guard lock(subscriber_hub_mtx_);
+    auto it = subscriber_hub_.find(topic);
+    if (it == subscriber_hub_.end()) {
+      return false;
+    }
+    auto & callbacks = it->second.callbacks;
+    auto erased = callbacks.erase(owner_id) > 0;
+    if (callbacks.empty()) {
+      it->second.subscriber.reset();
+      subscriber_hub_.erase(it);
+    }
+    return erased;
+  }
+
+protected:
+  std::string hardware_id_{"none"};
 
 private:
   // std::weak_ptr<rclcpp::Node> node_;
@@ -200,8 +326,18 @@ private:
   uint64_t exec_interval_ms_ = UINT64_MAX;
   uint64_t last_exec_timestamp_ms_ = 0;
   std::string monitor_name_{};
+  std::string owner_id_{};
   std::string publish_topic_name_{};
   bool is_enabled_;
+
+  struct SubscriberEntry
+  {
+    GenericSubscriber subscriber{nullptr};
+    std::unordered_map<std::string, CallbackType> callbacks{};
+  };
+
+  inline static std::mutex subscriber_hub_mtx_{};
+  inline static std::unordered_map<std::string, SubscriberEntry> subscriber_hub_{};
 };
 
 }  // namespace robosense::rs_monitor

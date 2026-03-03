@@ -99,15 +99,30 @@ You can run the `rs_monitor` node using the `ros2 launch` command.
 ros2 launch rs_monitor rs_monitor.launch.py
 ```
 
-You can use your own configuration file by specifying the `config_file` parameter.
+The Python launch file `rs_monitor.launch.py` supports the following arguments:
+
+| Argument | Default | Description |
+|----------|---------|-------------|
+| `config_file` | `${install}/share/rs_monitor/config/config.yaml` | Path to the config file |
+| `node_name` | `rs_monitor_<hostname>` | Node name (override for multiple instances on same host) |
+| `enable_self_recording` | `false` | Whether to launch `ros2 bag record` to save the monitoring results |
+| `self_recording_dir` | current working directory | Directory to save the self-recording bags when `enable_self_recording` is true |
+
+Example: use your own configuration file:
 
 ```bash
 ros2 launch rs_monitor rs_monitor.launch.py config_file:=path/to/your/config.yaml
 ```
 
+Example: enable built-in recording of monitoring topics:
+
+```bash
+ros2 launch rs_monitor rs_monitor.launch.py enable_self_recording:=true self_recording_dir:=/path/to/save/bags
+```
+
 ### 4.2 Record Monitoring Data
 
-* If the full data is not currently being recorded, you can start the `ros2 bag` command separately to record the topics output by `rs_monitor`.
+* If the full data is not currently being recorded, you can start the `ros2 bag` command separately to record the topics output by `rs_monitor`. Alternatively, you can use the launch argument `enable_self_recording:=true` (see 4.1) to let the launch file start a recorder automatically based on the topics configured in your config file.
 
 * By default, the monitoring of **resource usage** and **message frame rate** is published to the `/diagnostics` topic. You can modify this by changing specific fields in the configuration file.
 
@@ -177,7 +192,7 @@ Here are the detailed explanations of the configuration items for each part:
 
 #### 5.1.1 ros2_process_manager
 
-- `refresh_interval_ms`: The interval for refreshing the list of processes to be monitored, in milliseconds. The default value is `10000`, which refreshes every 10 seconds.
+- `refresh_interval_ms`: The interval for refreshing the list of processes to be monitored, in milliseconds. The default value is `6000`, which refreshes every 6 seconds.
 - `ros2_process_identifiers`: A list of identifiers used to recognize `ros2` processes.
     - In `linux` systems, it is used as a substring to match the `cmdline` of each process.
     - The difference with `monitored_processes` is that `monitored_processes` is more precise and specifies the process name in the monitoring results.

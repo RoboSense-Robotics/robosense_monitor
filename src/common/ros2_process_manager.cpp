@@ -30,6 +30,7 @@
 #include <unistd.h>
 #include <signal.h>
 #include <fstream>
+#include <errno.h>
 #endif
 
 #include "rs_monitor/common/common.h"
@@ -167,7 +168,7 @@ std::unordered_map<int, ROS2ProcessInfo> ROS2ProcessManager::get_processes()
     RS_WARN(nh_, died_processes.c_str());
     if (refresh_timer_) {
       if (
-        SystemTime() > last_refresh_time_ &&
+        SteadyTime() > last_refresh_time_ &&
         refresh_interval_ms_ * 1e6 + last_refresh_time_ > kMinimumRefreshIntervalMillSec * 1e6) {
 #if __ROS2__
         refresh_timer_->call();
@@ -326,10 +327,10 @@ void ROS2ProcessManager::refresh_process_cache()
     if (is_monitored && (!process_name.empty())) {
       info.is_monitored = true;
       info.name = process_name;
-      info.node_names = get_node_names(cmdline);
+      info.node_names = get_node_names(cmdline, comm);
     } else if (is_ros2_process(cmdline, comm)) {
       info.is_monitored = false;
-      info.node_names = get_node_names(cmdline);
+      info.node_names = get_node_names(cmdline, comm);
       if (info.node_names.size() == 1) {
         info.name = info.node_names[0];
       } else {
@@ -340,7 +341,7 @@ void ROS2ProcessManager::refresh_process_cache()
     }
 
     info.pid = pid;
-    info.last_update = clock_.now();
+    info.last_update = SteadyTime();
     new_processes[pid] = info;
   } while (Process32Next(hSnapshot, &pe));
 
@@ -391,12 +392,25 @@ std::string ROS2ProcessManager::read_comm(pid_t pid) const
   return comm;
 }
 
-bool ROS2ProcessManager::is_process_alive(int pid) const { return kill(pid, 0) == 0; }
+bool ROS2ProcessManager::is_process_alive(int pid) const
+{
+  auto ret = kill(pid, 0);
+  if (ret != 0) {
+    switch (errno) {
+      case EPERM:
+        return true;
+      default:
+        return false;
+    }
+  } else {
+    return true;
+  }
+}
 
 void ROS2ProcessManager::refresh_process_cache()
 {
   RS_DEBUG(nh_, "Refreshing process cache...");
-  last_refresh_time_ = SystemTime();
+  last_refresh_time_ = SteadyTime();
 
   std::unordered_map<int, ROS2ProcessInfo> new_processes;
   auto monitored_processes_copy(monitored_processes_);
@@ -423,10 +437,10 @@ void ROS2ProcessManager::refresh_process_cache()
     if (is_monitored && (!process_name.empty())) {
       info.is_monitored = true;
       info.name = process_name;
-      info.node_names = get_node_names(cmdline);
+      info.node_names = get_node_names(cmdline, comm);
     } else if (is_ros2_process(cmdline, comm)) {
       info.is_monitored = false;
-      info.node_names = get_node_names(cmdline);
+      info.node_names = get_node_names(cmdline, comm);
       if (info.node_names.size() == 1) {
         info.name = info.node_names[0];
       } else {
@@ -437,7 +451,7 @@ void ROS2ProcessManager::refresh_process_cache()
     }
 
     info.pid = pid;
-    info.last_update = SystemTime();
+    info.last_update = SteadyTime();
     new_processes[pid] = info;
   }
 
@@ -478,20 +492,40 @@ std::string ROS2ProcessManager::get_process_name(
   std::string const & cmdline, std::string const & comm) const
 {
   size_t pos = cmdline.find(comm);
-  std::string temp{};
+  std::string result = cmdline;
 
   if (pos != std::string::npos) {
-    return cmdline.substr(pos, max_process_name_length_);
+    result = result.substr(pos, max_process_name_length_);
   }
 
-  return cmdline.substr(0, max_process_name_length_);
+  auto ros_install_path = (fs::current_path() / "install").string();
+  auto start_idx = result.find(ros_install_path);
+  if (start_idx != std::string::npos) {
+    result =
+      result.substr(0, start_idx) + "$INSTALL" + result.substr(start_idx + ros_install_path.size());
+  }
+
+  result = result.substr(0, max_process_name_length_);
+
+  return result;
 }
 
-std::vector<std::string> ROS2ProcessManager::get_node_names(std::string const & cmdline) const
+std::vector<std::string> ROS2ProcessManager::get_node_names(
+  std::string const & cmdline, std::string const & comm) const
 {
   char const * kNodeKeyword = "__node:=";
 
   std::vector<std::string> node_names{};
+
+  // for (auto const & identifier : process_identifiers_comm_) {
+  //   if (comm == identifier) {
+  //     return node_names;
+  //   }
+  // }
+
+  if (comm.size() >= 3 && comm.substr(0, 3) == "ros") {
+    return node_names;
+  }
 
   auto parts(split_string(cmdline, ' '));
   for (auto const & part : parts) {

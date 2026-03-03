@@ -23,7 +23,6 @@
 #endif
 
 #include "rs_monitor/common/common.h"
-#include "diagnostic_updater/diagnostic_updater.hpp"
 
 namespace robosense::rs_monitor
 {
@@ -32,8 +31,7 @@ TimestampMonitor::TimestampMonitor(NodeHandle * nh) : MonitorBase("timestamp_mon
 
 void TimestampMonitor::run_once(uint64_t)
 {
-  prepare_generic_subscribers<TimestampMonitor, FirstArgType::TopicConfig>(
-    topics_, subscribers_, &TimestampMonitor::callback);
+  prepare_generic_subscribers<TimestampMonitor>(topics_, &TimestampMonitor::callback);
 #if __ROS1__
   auto ptr = &get_updater();
   if (ptr) {
@@ -55,6 +53,12 @@ bool TimestampMonitor::init(YAML::Node const & config)
       return false;
     }
 
+    auto & updater(get_updater());
+    updater.setPeriod(get_exec_interval_ms() / 1e3);
+    updater.add(
+      "Abnormal Latency Status",
+      std::bind(&TimestampMonitor::update_timestamp_status, this, std::placeholders::_1));
+
     auto topics = timestamp_monitor_config["topics"];
     if (!topics || !topics.IsSequence()) {
       RS_ERROR(get_node(), "No topics configured or invalid format");
@@ -69,6 +73,8 @@ bool TimestampMonitor::init(YAML::Node const & config)
 
       topic_config.name = std::move(topic_name);
       topic_config.max_difference_ms = max_difference_ms;
+      topic_config.message_count = 0;
+      topic_config.abnormal_latency_count = 0;
     }
 
   } catch (std::exception const & e) {
@@ -76,39 +82,34 @@ bool TimestampMonitor::init(YAML::Node const & config)
     return false;
   }
 
-  prepare_generic_subscribers<TimestampMonitor, FirstArgType::TopicConfig>(
-    topics_, subscribers_, &TimestampMonitor::callback);
+  prepare_generic_subscribers<TimestampMonitor>(topics_, &TimestampMonitor::callback);
 
   return true;
 }
 
 void TimestampMonitor::callback(
-  CALLBACK_PARAM_TYPE(SerializedMessage) const & message,
-  TimestampMonitor::TopicConfig const & config)
+  CALLBACK_PARAM_TYPE(SerializedMessage) const & message, TimestampMonitor::TopicConfig & config)
 {
-  static std::unordered_map<std::string, bool> has_std_header_mapping{};
-
-  uint64_t now_ns = ROSTime();
-
-  auto cache_it = has_std_header_mapping.find(config.name);
-  if (cache_it != has_std_header_mapping.end() && !cache_it->second) {
+  if (!config.is_deserializable) {
     return;
   }
 
+  uint64_t now_ns = ROSTime();
+
+  // extract timestamp from message header
 #if __ROS2__
   std_msgs::msg::Header header;
   try {
     rclcpp::Serialization<std_msgs::msg::Header> serialization;
     serialization.deserialize_message(message.get(), &header);
-    has_std_header_mapping[config.name] = true;
   } catch (rclcpp::exceptions::RCLError const & re) {
     RS_ERROR(
       get_node(), "Failed to deserialize header in topic [%s]: %s", config.name.c_str(), re.what());
-    has_std_header_mapping[config.name] = false;
+    config.is_deserializable = false;
     return;
   }
 
-  uint64_t timestamp_ns = header.stamp.sec * 1e9 + header.stamp.nanosec;
+  uint64_t const timestamp_ns = header.stamp.sec * 1000000000ull + header.stamp.nanosec;
 #elif __ROS1__
   std_msgs::Header header;
   std::vector<uint8_t> buf(message->size());
@@ -120,30 +121,66 @@ void TimestampMonitor::callback(
   header.stamp.nsec = ((uint32_t *)buf.data())[2];
 
   if (cache_it == has_std_header_mapping.end()) {
-    if (abs((header.stamp.sec - (ROSTime() / 1e9))) < 5.0) {
-      has_std_header_mapping[config.name] = true;
-    } else {
-      has_std_header_mapping[config.name] = false;
+    if (abs((header.stamp.sec - (ROSTime() / 1e9))) >= 10.0) {
+      RS_WARN(
+        get_node(),
+        "Message timestamp is more than 10 seconds later than system timestamp, topic: [%s]",
+        config.name.c_str());
+      RS_WARN(
+        get_node(), "Message timestamp: %u, system timestamp: %.10f", header.stamp.sec,
+        ROSTime() / 1e9);
+      config.is_deserializable = false;
     }
   }
 
-  uint64_t timestamp_ns = header.stamp.sec * 1e9 + header.stamp.nsec;
+  uint64_t const timestamp_ns = header.stamp.sec * 1000000000ull + header.stamp.nsec;
 #endif
 
+  // diff with current system timestamp
   if (timestamp_ns > now_ns) {
     RS_ERROR(
       get_node(), "Message timestamp is later than system timestamp, topic: [%s]",
       config.name.c_str());
   } else {
-    uint32_t difference_ms = (now_ns - timestamp_ns) * kFloatPrecision;
-    if (difference_ms > config.max_difference_ms) {
+    int64_t const diff_ns = static_cast<int64_t>(now_ns) - static_cast<int64_t>(timestamp_ns);
+    double const difference_ms = static_cast<double>(diff_ns) / 1e6;
+    if (difference_ms > static_cast<double>(config.max_difference_ms)) {
+      config.abnormal_latency_count.fetch_add(1, std::memory_order_relaxed);
       RS_ERROR(
         get_node(),
         "The difference between system timestamp and message timestamp exceeds the threshold "
-        "[%ums], difference: [%ums], topic: [%s]",
+        "[%ums], difference: [%.3fms], topic: [%s]",
         config.max_difference_ms, difference_ms, config.name.c_str());
     }
   }
+
+  config.message_count.fetch_add(1, std::memory_order_relaxed);
+}
+
+void TimestampMonitor::update_timestamp_status(diagnostic_updater::DiagnosticStatusWrapper & stat)
+{
+  bool all_ok = true;
+  std::string message{};
+
+  for (auto & [topic, config] : topics_) {
+    if (!config.is_enabled) {
+      continue;
+    }
+
+    uint64_t message_count = config.message_count.load(std::memory_order_acquire);
+    uint64_t abnormal_latency_count = config.abnormal_latency_count.load(std::memory_order_acquire);
+
+    char buf[64]{0};
+    std::snprintf(buf, sizeof(buf), "%lu / %lu Messages", abnormal_latency_count, message_count);
+    stat.add(topic, buf);
+
+    if (abnormal_latency_count > 0 && all_ok) {
+      all_ok = false;
+      message = "Abnormal latency detected";
+    }
+  }
+
+  stat.summary(all_ok ? DiagnosticStatus::OK : DiagnosticStatus::WARN, message);
 }
 
 }  // namespace robosense::rs_monitor

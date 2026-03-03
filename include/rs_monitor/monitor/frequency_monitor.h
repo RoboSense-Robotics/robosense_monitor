@@ -101,15 +101,9 @@ private:
    * Increments the message counter for the topic when a message is received.
    *
    * @param message Serialized message (unused)
-   * @param topic_name Name of the topic
+   * @param config Config of the topic
    */
-  void message_callback(CALLBACK_PARAM_TYPE(SerializedMessage), std::string const & topic_name);
-
-  /**
-   * @brief Gets the current time in milliseconds
-   * @return Current time in milliseconds
-   */
-  uint64_t now_ms();
+  void message_callback(CALLBACK_PARAM_TYPE(SerializedMessage), TopicConfig & config);
 
   /**
    * @brief Calculates current frequencies for all monitored topics
@@ -122,7 +116,6 @@ private:
 
 private:
   std::unordered_map<std::string, TopicConfig> topics_;
-  GenericSubscriberMap subscribers_;
 };
 
 }  // namespace robosense::rs_monitor

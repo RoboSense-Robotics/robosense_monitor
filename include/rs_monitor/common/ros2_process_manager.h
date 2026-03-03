@@ -140,11 +140,13 @@ private:
   std::string get_process_name(std::string const & cmdline, std::string const & comm) const;
 
   /**
-   * @brief Extracts ROS2 node names from a command line
+   * @brief Extracts ROS2 node names from a command line, if comm is in process_identifiers_comm_, return empty list
    * @param cmdline Process command line
+   * @param comm Process executable name
    * @return Vector of node names
    */
-  std::vector<std::string> get_node_names(std::string const & cmdline) const;
+  std::vector<std::string> get_node_names(
+    std::string const & cmdline, std::string const & comm) const;
 
   /**
    * @brief Checks if a process matches any monitored process pattern

@@ -26,6 +26,7 @@
 
 #define ROSTime rclcpp::Clock(RCL_ROS_TIME).now().nanoseconds
 #define SystemTime rclcpp::Clock(RCL_SYSTEM_TIME).now().nanoseconds
+#define SteadyTime rclcpp::Clock(RCL_STEADY_TIME).now().nanoseconds
 
 using NodeHandle = rclcpp::Node;
 using ros_time_t = int64_t;
@@ -47,6 +48,7 @@ using SerializedMessage = rclcpp::SerializedMessage;
 
 #define ROSTime ros::Time::now().toNSec
 #define SystemTime ros::Time::now().toNSec
+#define SteadyTime ros::WallTime::now().toNSec
 
 using NodeHandle = ros::NodeHandle;
 using ros_time_t = uint64_t;

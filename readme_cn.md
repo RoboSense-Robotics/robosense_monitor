@@ -99,15 +99,30 @@ pip install -r rs_monitor/requirements.txt
 ros2 launch rs_monitor rs_monitor.launch.py
 ```
 
-可以通过参数 `config_file` 来指定需要加载的配置文件
+Python 启动文件 `rs_monitor.launch.py` 支持以下参数：
+
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `config_file` | `${install}/share/rs_monitor/config/config.yaml` | 配置文件路径 |
+| `node_name` | `rs_monitor_<主机名>` | 节点名称（同一主机多实例时可覆盖） |
+| `enable_self_recording` | `false` | 是否同时启动 `ros2 bag record` 录制监测结果 |
+| `self_recording_dir` | 当前工作目录 | 当 `enable_self_recording` 为 true 时，自录制 bag 的保存目录 |
+
+示例：指定自己的配置文件
 
 ```bash
 ros2 launch rs_monitor rs_monitor.launch.py config_file:=path/to/your/config.yaml
 ```
 
+示例：开启内置录制（自动录制监测话题）
+
+```bash
+ros2 launch rs_monitor rs_monitor.launch.py enable_self_recording:=true self_recording_dir:=/path/to/save/bags
+```
+
 ### 4.2 录制监测数据
 
-* 如果当前没有录制全量数据，可以单独启动 `ros2 bag` 命令来录制 `rs_monitor` 输出的 topic
+* 如果当前没有录制全量数据，可以单独启动 `ros2 bag` 命令来录制 `rs_monitor` 输出的 topic；也可以使用 4.1 中的 launch 参数 `enable_self_recording:=true`，由启动文件根据配置文件中的话题自动启动录制。
 
 * 默认配置下，**资源占用率**和**消息帧率**的监测会发布到 `/diagnostics` 话题，可以通过更改配置文件中的特定字段来修改
 
@@ -148,7 +163,7 @@ options:
                         默认为空，表示不进行分割
 ```
 
-假设您在 `/root/rosbag2_2025_01_14-07_26_38` 下录制了一份 bag，可以通过以下命令在 `${PWD}/output/result.heml` 路径下输出可视化报告
+假设您在 `/root/rosbag2_2025_01_14-07_26_38` 下录制了一份 bag，可以通过以下命令在 `${PWD}/output/result.html` 路径下输出可视化报告
 
 ```bash
 ros2 run rs_monitor parser.py /root/rosbag2_2025_01_14-07_26_38
